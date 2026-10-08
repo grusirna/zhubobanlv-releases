@@ -41,6 +41,8 @@ try {
   $phase = 'prepare'
   & pnpm -C $sourceRoot install --frozen-lockfile *>> $log
   if ($LASTEXITCODE) { throw 'Diagnostic dependency preparation failed' }
+  & pnpm -C $sourceRoot build *>> $log
+  if ($LASTEXITCODE) { throw 'Diagnostic JavaScript tool preparation failed' }
   $outer = Join-Path $diagnosticRoot 'nsis'
   $package = Join-Path $diagnosticRoot 'win-unpacked'
   & 'C:\Program Files\7-Zip\7z.exe' x (Join-Path $diagnosticRoot 'candidate.exe') ('-o' + $outer) -y -bso0 -bsp0 *>> $log
@@ -58,6 +60,7 @@ try {
   $null = $process.Handle
   if (-not $process.WaitForExit(300000)) { throw 'Owned diagnostic UI exceeded its deadline' }
   $passed = $process.ExitCode -eq 0
+  if (-not $passed) { throw 'Diagnostic UI failed' }
 } catch {
   @{status='fail';diagnosticOnly=$true;phase=$phase;runId=$env:BUILD_RUN_ID} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $publicOutput 'failure.json') -Encoding utf8
 } finally {
