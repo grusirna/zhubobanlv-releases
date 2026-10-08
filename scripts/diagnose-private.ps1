@@ -48,7 +48,7 @@ try {
   if ($LASTEXITCODE) { throw 'Diagnostic NSIS extraction failed' }
   $results = @()
   $trial = 0
-  foreach ($mode in @('baseline','trace-no-timer','trace-timer','baseline')) {
+  foreach ($mode in @('baseline','baseline')) {
     $trial++
     $package = Join-Path $diagnosticRoot ('trial-' + $trial + '-' + $mode)
     & 'C:\Program Files\7-Zip\7z.exe' x (Join-Path $outer '$PLUGINSDIR/app-64.7z') ('-o' + $package) -y -bso0 -bsp0 *>> $log
@@ -63,6 +63,7 @@ try {
     $env:UNIFIED_PACKAGE_DIR = $package
     $env:ELECTRON_USER_DATA_PATH = Join-Path $diagnosticRoot ('codex-test-user-data-' + $trial)
     $env:STREAMER_COMPANION_ACCEPTANCE_TEST = '1'
+    $env:MAIN_INSPECTOR_DIAGNOSTICS = '1'
     $trialOutput = $errors + '-' + $trial + '.stdout'
     $trialErrors = $errors + '-' + $trial + '.stderr'
     $started = [DateTime]::UtcNow
@@ -88,7 +89,7 @@ try {
   $files = @($log)
   foreach ($uiRun in @(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'output/unified-ui') -Directory -ErrorAction SilentlyContinue)) {
     if ($uiRun.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Unexpected diagnostic link' }
-    foreach ($name in @('desktop.log','failure.json','result.json')) {
+    foreach ($name in @('desktop.log','failure.json','result.json','main-inspector.json')) {
       $uiFile = Join-Path $uiRun.FullName $name
       if (Test-Path -LiteralPath $uiFile) {
         $copy = Join-Path $diagnosticRoot ('ui-' + $uiRun.Name + '-' + $name)
