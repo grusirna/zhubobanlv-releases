@@ -94,6 +94,42 @@ try {
   $env:GIT_SSH_COMMAND = $null
   $env:RUNTIME_GITHUB_TOKEN = $null
   if ((Test-Path -LiteralPath (Join-Path $sourceRoot 'scripts/build-transfer.mjs')) -and (Test-Path -LiteralPath $buildLog)) {
+    # Preserve the exact built package for private diagnosis when a later gate fails.
+    # The draft job still requires passed=true; this encrypted file is not a release.
+    if (-not $passed) {
+      $failedReportPath = Join-Path $sourceRoot 'output/github-build/private-evidence/build-report.json'
+      if (Test-Path -LiteralPath $failedReportPath) {
+        $failedReport = Get-Content -LiteralPath $failedReportPath -Raw | ConvertFrom-Json
+        if ($failedReport.sourceRevision -eq $env:SOURCE_REVISION -and $failedReport.productVersion -eq $env:PRODUCT_VERSION -and
+            $failedReport.runId -eq $env:BUILD_RUN_ID -and $failedReport.checks.package.status -eq 'pass' -and
+            $failedReport.artifact.filename -eq ('ZhuBoBanLv-Setup-' + $env:PRODUCT_VERSION + '-x64.exe')) {
+          $failedInstaller = Join-Path $sourceRoot ('release/unified/' + $env:PRODUCT_VERSION + '/' + $failedReport.artifact.filename)
+          if ((Test-Path -LiteralPath $failedInstaller) -and
+              (Get-Item -LiteralPath $failedInstaller).Length -eq $failedReport.artifact.sizeBytes -and
+              (Get-FileHash -LiteralPath $failedInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -eq $failedReport.artifact.sha256) {
+            & node (Join-Path $sourceRoot 'scripts/build-transfer.mjs') encrypt $failedInstaller (Join-Path $publicRoot 'build-transfer-public.pem') (Join-Path $publicOutput 'diagnostic-installer.exe.enc') *>> $buildLog
+            if ($LASTEXITCODE) { throw 'Encrypted diagnostic installer failed' }
+          }
+        }
+      }
+    }
+    $uiDiagnosticFiles = @()
+    $uiOutputRoot = Join-Path $sourceRoot 'output/unified-ui'
+    if (Test-Path -LiteralPath $uiOutputRoot) {
+      foreach ($uiRun in @(Get-ChildItem -LiteralPath $uiOutputRoot -Directory)) {
+        if ($uiRun.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Unexpected UI diagnostic link' }
+        foreach ($uiName in @('desktop.log','failure.json','result.json')) {
+          $uiFile = Join-Path $uiRun.FullName $uiName
+          if (Test-Path -LiteralPath $uiFile) {
+            $uiItem = Get-Item -LiteralPath $uiFile
+            if ($uiItem.PSIsContainer -or ($uiItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw 'Unexpected UI diagnostic file' }
+            $uiCopy = Join-Path $privateOutput ('ui-' + $uiRun.Name + '-' + $uiName)
+            Copy-Item -LiteralPath $uiItem.FullName -Destination $uiCopy
+            $uiDiagnosticFiles += $uiCopy
+          }
+        }
+      }
+    }
     $runtimeFiles = foreach ($cache in @('.cache/runtime-dependencies','.cache/teleprompter-runtime')) {
       $cacheRoot = Join-Path $sourceRoot $cache
       if (Test-Path -LiteralPath $cacheRoot) {
@@ -103,7 +139,7 @@ try {
     $runtimeState = Join-Path $privateOutput 'runtime-download-state.json'
     ConvertTo-Json -InputObject @($runtimeFiles) -Depth 4 | Set-Content -LiteralPath $runtimeState -Encoding utf8
     $diagnosticZip = Join-Path $privateOutput 'diagnostics.zip'
-    $logFiles = @($bootstrapLog,$buildLog,$runtimeState) + @(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'output/github-build/private-evidence') -File -ErrorAction SilentlyContinue | Where-Object Extension -in @('.log','.json') | ForEach-Object FullName)
+    $logFiles = @($bootstrapLog,$buildLog,$runtimeState) + $uiDiagnosticFiles + @(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'output/github-build/private-evidence') -File -ErrorAction SilentlyContinue | Where-Object Extension -in @('.log','.json') | ForEach-Object FullName)
     if (Test-Path -LiteralPath $buildErrorLog) { $logFiles += $buildErrorLog }
     Compress-Archive -LiteralPath $logFiles -DestinationPath $diagnosticZip
     & node (Join-Path $sourceRoot 'scripts/build-transfer.mjs') encrypt $diagnosticZip (Join-Path $publicRoot 'build-transfer-public.pem') (Join-Path $publicOutput 'diagnostics.enc') *>> $buildLog
