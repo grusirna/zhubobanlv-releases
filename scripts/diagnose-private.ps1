@@ -48,13 +48,14 @@ try {
   if ($LASTEXITCODE) { throw 'Diagnostic NSIS extraction failed' }
   $results = @()
   $trial = 0
-  foreach ($mode in @('exception-monitor','exception-monitor','exception-monitor','exception-monitor','exception-monitor')) {
+  foreach ($mode in @('rebuilt-desktop','rebuilt-desktop','rebuilt-desktop','rebuilt-desktop','rebuilt-desktop')) {
     $trial++
     $package = Join-Path $diagnosticRoot ('trial-' + $trial + '-' + $mode)
     & 'C:\Program Files\7-Zip\7z.exe' x (Join-Path $outer '$PLUGINSDIR/app-64.7z') ('-o' + $package) -y -bso0 -bsp0 *>> $log
     if ($LASTEXITCODE) { throw 'Diagnostic package extraction failed' }
     if ($mode -ne 'baseline') {
       $env:DIAGNOSTIC_PACKAGE_DIR = $package
+      $env:DIAGNOSTIC_REBUILT_DESKTOP = $(if ($mode -eq 'rebuilt-desktop') {'1'} else {'0'})
       $env:DIAGNOSTIC_EXCEPTION_MONITOR = $(if ($mode -eq 'exception-monitor') {'1'} else {'0'})
       $env:DIAGNOSTIC_EVENT_LOOP_TIMER = $(if ($mode -eq 'trace-timer') {'1'} else {'0'})
       & node (Join-Path $sourceRoot 'scripts/diagnose-ui-exit.mjs') *>> $log
