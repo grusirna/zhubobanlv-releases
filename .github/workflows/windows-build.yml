@@ -42,6 +42,7 @@ jobs:
           SOURCE_REVISION: ${{ inputs.source_sha }}
           PRODUCT_VERSION: ${{ inputs.version }}
           BUILD_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          RUNTIME_GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/build-private.ps1
       - name: Retain encrypted candidate or diagnostics
         if: always()
