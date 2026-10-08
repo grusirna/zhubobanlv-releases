@@ -9,6 +9,7 @@ $key = Join-Path $env:RUNNER_TEMP ('source-key-' + $env:BUILD_RUN_ID)
 $hosts = Join-Path $env:RUNNER_TEMP ('source-hosts-' + $env:BUILD_RUN_ID)
 $bootstrapLog = Join-Path $env:RUNNER_TEMP ('bootstrap-' + $env:BUILD_RUN_ID + '.log')
 $buildLog = Join-Path $env:RUNNER_TEMP ('build-' + $env:BUILD_RUN_ID + '.log')
+$buildErrorLog = Join-Path $env:RUNNER_TEMP ('build-errors-' + $env:BUILD_RUN_ID + '.log')
 $passed = $false
 $failurePhase = 'source'
 New-Item -ItemType Directory -Path $sourceRoot,$privateOutput,$publicOutput | Out-Null
@@ -36,8 +37,26 @@ try {
   $env:GIT_SSH_COMMAND = $null
   $failurePhase = 'build'
   $env:PUBLIC_OUTPUT_DIR = $privateOutput
-  & node (Join-Path $sourceRoot 'scripts/github-build.mjs') *> $buildLog
-  if ($LASTEXITCODE) { throw 'Build gate failed' }
+  $buildProcess = Start-Process -FilePath (Get-Command node).Source -ArgumentList ('"' + (Join-Path $sourceRoot 'scripts/github-build.mjs') + '"') -WindowStyle Hidden -PassThru -RedirectStandardOutput $buildLog -RedirectStandardError $buildErrorLog
+  $null = $buildProcess.Handle
+  $knownGates = @('install','dependencies','audit','lint','build','typecheck','tests','coverage','releaseTests','runtime','native','nativeTests','cjs','package','packageSecrets','backend','ui')
+  $shown = @{}
+  do {
+    Start-Sleep -Seconds 5
+    $buildProcess.Refresh()
+    $currentReport = $null
+    try { $currentReport = Get-Content -LiteralPath (Join-Path $sourceRoot 'output/github-build/private-evidence/build-report.json') -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop } catch {}
+    if ($currentReport.sourceRevision -eq $env:SOURCE_REVISION -and $currentReport.productVersion -eq $env:PRODUCT_VERSION -and $currentReport.runId -eq $env:BUILD_RUN_ID) {
+      foreach ($gate in $knownGates) {
+        $status = $currentReport.checks.$gate.status
+        if ($status -in @('pass','fail') -and $shown[$gate] -ne $status) {
+          @{phase=$gate;status=$status;sourceRevision=$env:SOURCE_REVISION;productVersion=$env:PRODUCT_VERSION;runId=$env:BUILD_RUN_ID} | ConvertTo-Json -Compress | Write-Output
+          $shown[$gate] = $status
+        }
+      }
+    }
+  } while (-not $buildProcess.HasExited)
+  if ($buildProcess.ExitCode -ne 0) { throw 'Build gate failed' }
   $report = Get-Content -LiteralPath (Join-Path $privateOutput 'build-report.json') -Raw | ConvertFrom-Json
   $installer = Join-Path $privateOutput $report.artifact.filename
   $failurePhase = 'transfer'
@@ -55,6 +74,7 @@ try {
   if ((Test-Path -LiteralPath (Join-Path $sourceRoot 'scripts/build-transfer.mjs')) -and (Test-Path -LiteralPath $buildLog)) {
     $diagnosticZip = Join-Path $privateOutput 'diagnostics.zip'
     $logFiles = @($bootstrapLog,$buildLog) + @(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'output/github-build/private-evidence') -File -ErrorAction SilentlyContinue | Where-Object Extension -in @('.log','.json') | ForEach-Object FullName)
+    if (Test-Path -LiteralPath $buildErrorLog) { $logFiles += $buildErrorLog }
     Compress-Archive -LiteralPath $logFiles -DestinationPath $diagnosticZip
     & node (Join-Path $sourceRoot 'scripts/build-transfer.mjs') encrypt $diagnosticZip (Join-Path $publicRoot 'build-transfer-public.pem') (Join-Path $publicOutput 'diagnostics.enc') *>> $buildLog
     if ($LASTEXITCODE) { throw 'Encrypted diagnostics failed' }
