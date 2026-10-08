@@ -18,7 +18,24 @@ const gh = args => execFileSync('gh', args, {encoding:'utf8',stdio:['ignore','pi
 const tag=`v${version}`;
 let existing;
 try { existing=JSON.parse(gh(['api',`repos/${repo}/releases/tags/${tag}`])); } catch(error) { if (!String(error.stderr).includes('404')) throw new Error('Cannot inspect existing release'); }
-if (existing) throw new Error('Version already exists; review the existing candidate without overwriting');
+const files = [file,`${file}.json`,'candidate/build-report.json','candidate/SHA256SUMS'];
+if (existing) {
+  const metadata = existing.assets.find(asset => asset.name === 'build-report.json');
+  if (!metadata) throw new Error('Existing version has no verifiable build identity');
+  const previous = JSON.parse(gh(['api',`repos/${repo}/releases/assets/${metadata.id}`,'-H','Accept: application/octet-stream']));
+  if (previous.sourceRevision !== sha || previous.productVersion !== version || previous.artifact?.sha256 !== report.artifact.sha256) throw new Error('Same version has a different candidate; overwrite rejected');
+  if (!existing.draft) throw new Error('Version is already published and immutable');
+  for (const item of files) {
+    const name=item.split('/').at(-1);
+    const asset=existing.assets.find(asset=>asset.name===name);
+    const digest=crypto.createHash('sha256'); for await (const bytes of fs.createReadStream(item)) digest.update(bytes);
+    if (asset) {
+      if (asset.digest!==`sha256:${digest.digest('hex')}` || asset.size!==fs.statSync(item).size) throw new Error('Existing draft material differs; overwrite rejected');
+    } else gh(['release','upload',tag,'--repo',repo,item]);
+  }
+  console.log(JSON.stringify({status:'draft',version,sourceRevision:sha,runId:previous.runId}));
+  process.exit(0);
+}
 fs.writeFileSync('candidate/draft-notes.md', `主播伴侣 ${version} 云端候选\n\n源码提交：${sha}\n运行：${runId}\n安装器 SHA-256：${report.artifact.sha256}\n自动测试：${report.tests.passed}/${report.tests.total}\n\n等待同哈希宿主六页面、安装升级及数据保留验收。候选附件经过加密，不能作为正式下载。\n`);
-gh(['release','create',tag,'--repo',repo,'--target','main','--draft','--title',`主播伴侣 ${version}`,'--notes-file','candidate/draft-notes.md',file,`${file}.json`,'candidate/build-report.json','candidate/SHA256SUMS']);
+gh(['release','create',tag,'--repo',repo,'--target','main','--draft','--title',`主播伴侣 ${version}`,'--notes-file','candidate/draft-notes.md',...files]);
 console.log(JSON.stringify({status:'draft',version,sourceRevision:sha,runId}));
