@@ -16,8 +16,7 @@ const hash=crypto.createHash('sha256'); for await (const bytes of fs.createReadS
 if (envelope.sha256 !== report.artifact.sha256 || envelope.encryptedSha256 !== hash.digest('hex')) throw new Error('Invalid transfer');
 const gh = args => execFileSync('gh', args, {encoding:'utf8',stdio:['ignore','pipe','pipe']});
 const tag=`v${version}`;
-let existing;
-try { existing=JSON.parse(gh(['api',`repos/${repo}/releases/tags/${tag}`])); } catch(error) { if (!String(error.stderr).includes('404')) throw new Error('Cannot inspect existing release'); }
+const existing=JSON.parse(gh(['api',`repos/${repo}/releases?per_page=100`,'--paginate','--slurp'])).flat().find(release=>release.tag_name===tag);
 const files = [file,`${file}.json`,'candidate/build-report.json','candidate/SHA256SUMS'];
 if (existing) {
   const metadata = existing.assets.find(asset => asset.name === 'build-report.json');
