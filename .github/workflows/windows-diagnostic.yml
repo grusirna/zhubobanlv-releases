@@ -1,0 +1,52 @@
+name: Windows private exit diagnosis
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Private main diagnostic tool commit
+        required: true
+        type: string
+      version:
+        description: Candidate product version
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  diagnose:
+    if: github.repository == 'grusirna/zhubobanlv-releases' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.21.1
+      - name: Prepare diagnostic toolchain
+        shell: pwsh
+        run: npm install --global pnpm@9.15.0
+      - name: Reproduce in isolated package
+        shell: pwsh
+        env:
+          SOURCE_READ_KEY: ${{ secrets.SOURCE_READ_KEY }}
+          DIAGNOSTIC_TRANSFER_KEY: ${{ secrets.DIAGNOSTIC_TRANSFER_KEY }}
+          SOURCE_REVISION: ${{ inputs.source_sha }}
+          PRODUCT_VERSION: ${{ inputs.version }}
+          BUILD_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+          PUPPETEER_SKIP_DOWNLOAD: 'true'
+        run: ./scripts/diagnose-private.ps1
+      - name: Retain encrypted diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            public-output/diagnostics.enc
+            public-output/diagnostics.enc.json
+            public-output/failure.json
+          if-no-files-found: error
+          retention-days: 3
