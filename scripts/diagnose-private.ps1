@@ -44,22 +44,37 @@ try {
   & pnpm -C $sourceRoot build *>> $log
   if ($LASTEXITCODE) { throw 'Diagnostic JavaScript tool preparation failed' }
   $outer = Join-Path $diagnosticRoot 'nsis'
-  $package = Join-Path $diagnosticRoot 'win-unpacked'
   & 'C:\Program Files\7-Zip\7z.exe' x (Join-Path $diagnosticRoot 'candidate.exe') ('-o' + $outer) -y -bso0 -bsp0 *>> $log
   if ($LASTEXITCODE) { throw 'Diagnostic NSIS extraction failed' }
-  & 'C:\Program Files\7-Zip\7z.exe' x (Join-Path $outer '$PLUGINSDIR/app-64.7z') ('-o' + $package) -y -bso0 -bsp0 *>> $log
-  if ($LASTEXITCODE) { throw 'Diagnostic package extraction failed' }
-  $env:DIAGNOSTIC_PACKAGE_DIR = $package
-  & node (Join-Path $sourceRoot 'scripts/diagnose-ui-exit.mjs') *>> $log
-  if ($LASTEXITCODE) { throw 'Diagnostic instrumentation failed' }
-  $phase = 'ui'
-  $env:UNIFIED_PACKAGE_DIR = $package
-  $env:ELECTRON_USER_DATA_PATH = Join-Path $diagnosticRoot 'codex-test-user-data'
-  $env:STREAMER_COMPANION_ACCEPTANCE_TEST = '1'
-  $process = Start-Process -FilePath (Get-Command node).Source -ArgumentList ('"' + (Join-Path $sourceRoot 'scripts/unified-ui-acceptance.mjs') + '"') -WindowStyle Hidden -PassThru -RedirectStandardOutput $errors -RedirectStandardError ($errors + '.stderr')
-  $null = $process.Handle
-  if (-not $process.WaitForExit(300000)) { throw 'Owned diagnostic UI exceeded its deadline' }
-  $passed = $process.ExitCode -eq 0
+  $results = @()
+  $trial = 0
+  foreach ($mode in @('baseline','trace-no-timer','trace-timer','baseline')) {
+    $trial++
+    $package = Join-Path $diagnosticRoot ('trial-' + $trial + '-' + $mode)
+    & 'C:\Program Files\7-Zip\7z.exe' x (Join-Path $outer '$PLUGINSDIR/app-64.7z') ('-o' + $package) -y -bso0 -bsp0 *>> $log
+    if ($LASTEXITCODE) { throw 'Diagnostic package extraction failed' }
+    if ($mode -ne 'baseline') {
+      $env:DIAGNOSTIC_PACKAGE_DIR = $package
+      $env:DIAGNOSTIC_EVENT_LOOP_TIMER = $(if ($mode -eq 'trace-timer') {'1'} else {'0'})
+      & node (Join-Path $sourceRoot 'scripts/diagnose-ui-exit.mjs') *>> $log
+      if ($LASTEXITCODE) { throw 'Diagnostic instrumentation failed' }
+    }
+    $phase = 'ui'
+    $env:UNIFIED_PACKAGE_DIR = $package
+    $env:ELECTRON_USER_DATA_PATH = Join-Path $diagnosticRoot ('codex-test-user-data-' + $trial)
+    $env:STREAMER_COMPANION_ACCEPTANCE_TEST = '1'
+    $trialOutput = $errors + '-' + $trial + '.stdout'
+    $trialErrors = $errors + '-' + $trial + '.stderr'
+    $started = [DateTime]::UtcNow
+    $process = Start-Process -FilePath (Get-Command node).Source -ArgumentList ('"' + (Join-Path $sourceRoot 'scripts/unified-ui-acceptance.mjs') + '"') -WindowStyle Hidden -PassThru -RedirectStandardOutput $trialOutput -RedirectStandardError $trialErrors
+    $null = $process.Handle
+    $stopped = $process.WaitForExit(60000)
+    if (-not $stopped) { & taskkill.exe /PID $process.Id /T /F | Out-Null; if (-not $process.WaitForExit(10000)) { throw 'Owned diagnostic process did not stop' } }
+    $results += @{trial=$trial;mode=$mode;success=($stopped -and $process.ExitCode -eq 0);startedAt=$started.ToString('o');finishedAt=[DateTime]::UtcNow.ToString('o');exitCode=$process.ExitCode}
+    $process = $null
+  }
+  $results | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $diagnosticRoot 'trial-results.json') -Encoding utf8
+  $passed = @($results | Where-Object { -not $_.success }).Count -eq 0
   if (-not $passed) { throw 'Diagnostic UI failed' }
 } catch {
   @{status='fail';diagnosticOnly=$true;phase=$phase;runId=$env:BUILD_RUN_ID} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $publicOutput 'failure.json') -Encoding utf8
@@ -70,8 +85,20 @@ try {
   $env:GIT_SSH_COMMAND = $null
   $env:DIAGNOSTIC_TRANSFER_KEY = $null
   $env:GH_TOKEN = $null
-  $files = @($log) + @(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'output/unified-ui') -File -Recurse -ErrorAction SilentlyContinue | Where-Object Name -in @('desktop.log','failure.json','result.json') | ForEach-Object FullName)
-  foreach ($file in @($errors,($errors + '.stderr'),(Join-Path $diagnosticRoot 'identity.json'))) { if (Test-Path -LiteralPath $file) { $files += $file } }
+  $files = @($log)
+  foreach ($uiRun in @(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'output/unified-ui') -Directory -ErrorAction SilentlyContinue)) {
+    if ($uiRun.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Unexpected diagnostic link' }
+    foreach ($name in @('desktop.log','failure.json','result.json')) {
+      $uiFile = Join-Path $uiRun.FullName $name
+      if (Test-Path -LiteralPath $uiFile) {
+        $copy = Join-Path $diagnosticRoot ('ui-' + $uiRun.Name + '-' + $name)
+        Copy-Item -LiteralPath $uiFile -Destination $copy
+        $files += $copy
+      }
+    }
+  }
+  $files += @(Get-ChildItem -LiteralPath $env:RUNNER_TEMP -File | Where-Object { $_.Name.StartsWith([IO.Path]::GetFileName($errors) + '-') } | ForEach-Object FullName)
+  foreach ($file in @((Join-Path $diagnosticRoot 'identity.json'),(Join-Path $diagnosticRoot 'trial-results.json'))) { if (Test-Path -LiteralPath $file) { $files += $file } }
   if ((Test-Path -LiteralPath (Join-Path $sourceRoot 'scripts/build-transfer.mjs')) -and $files.Count) {
     $zip = Join-Path $env:RUNNER_TEMP ('exit-logs-' + $env:BUILD_RUN_ID + '.zip')
     Compress-Archive -LiteralPath $files -DestinationPath $zip
