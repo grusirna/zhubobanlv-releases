@@ -1,0 +1,82 @@
+name: Windows build and draft
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Private main commit (full 40-character SHA)
+        required: true
+        type: string
+      version:
+        description: Product version from that commit
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: windows-${{ inputs.version }}
+  cancel-in-progress: false
+jobs:
+  build:
+    if: github.repository == 'grusirna/zhubobanlv-releases' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: windows-2022
+    timeout-minutes: 90
+    outputs:
+      passed: ${{ steps.build.outputs.passed }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.21.1
+      - name: Prepare pinned toolchain
+        shell: pwsh
+        run: |
+          npm install --global pnpm@9.15.0
+          rustup toolchain install 1.92.0 --profile minimal
+      - name: Build isolated candidate
+        id: build
+        shell: pwsh
+        env:
+          SOURCE_READ_KEY: ${{ secrets.SOURCE_READ_KEY }}
+          SOURCE_REVISION: ${{ inputs.source_sha }}
+          PRODUCT_VERSION: ${{ inputs.version }}
+          BUILD_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: ./scripts/build-private.ps1
+      - name: Retain encrypted candidate or diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            public-output/*.enc
+            public-output/*.enc.json
+            public-output/build-report.json
+            public-output/SHA256SUMS
+            public-output/failure.json
+          if-no-files-found: error
+          retention-days: 3
+  draft:
+    needs: build
+    if: needs.build.outputs.passed == 'true' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: candidate
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.21.1
+      - name: Create draft for host acceptance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_sha }}
+          PRODUCT_VERSION: ${{ inputs.version }}
+          BUILD_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/create-draft.mjs
