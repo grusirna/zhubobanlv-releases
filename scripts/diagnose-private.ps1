@@ -89,7 +89,7 @@ try {
   $files = @($log)
   foreach ($uiRun in @(Get-ChildItem -LiteralPath (Join-Path $sourceRoot 'output/unified-ui') -Directory -ErrorAction SilentlyContinue)) {
     if ($uiRun.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Unexpected diagnostic link' }
-    foreach ($name in @('desktop.log','failure.json','result.json','main-inspector.json')) {
+    foreach ($name in @('desktop.log','failure.json','result.json','main-inspector.json','desktop.dmp')) {
       $uiFile = Join-Path $uiRun.FullName $name
       if (Test-Path -LiteralPath $uiFile) {
         $copy = Join-Path $diagnosticRoot ('ui-' + $uiRun.Name + '-' + $name)
