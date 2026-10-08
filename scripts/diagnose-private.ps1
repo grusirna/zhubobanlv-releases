@@ -48,7 +48,7 @@ try {
   if ($LASTEXITCODE) { throw 'Diagnostic NSIS extraction failed' }
   $results = @()
   $trial = 0
-  foreach ($mode in @('baseline','baseline')) {
+  foreach ($mode in @('baseline','baseline','baseline','baseline','baseline')) {
     $trial++
     $package = Join-Path $diagnosticRoot ('trial-' + $trial + '-' + $mode)
     & 'C:\Program Files\7-Zip\7z.exe' x (Join-Path $outer '$PLUGINSDIR/app-64.7z') ('-o' + $package) -y -bso0 -bsp0 *>> $log
@@ -69,7 +69,7 @@ try {
     $started = [DateTime]::UtcNow
     $process = Start-Process -FilePath (Get-Command node).Source -ArgumentList ('"' + (Join-Path $sourceRoot 'scripts/unified-ui-acceptance.mjs') + '"') -WindowStyle Hidden -PassThru -RedirectStandardOutput $trialOutput -RedirectStandardError $trialErrors
     $null = $process.Handle
-    $stopped = $process.WaitForExit(60000)
+    $stopped = $process.WaitForExit(90000)
     if (-not $stopped) { & taskkill.exe /PID $process.Id /T /F | Out-Null; if (-not $process.WaitForExit(10000)) { throw 'Owned diagnostic process did not stop' } }
     $results += @{trial=$trial;mode=$mode;success=($stopped -and $process.ExitCode -eq 0);startedAt=$started.ToString('o');finishedAt=[DateTime]::UtcNow.ToString('o');exitCode=$process.ExitCode}
     $process = $null
