@@ -2,7 +2,7 @@
 
 [正式 Windows 下载](https://github.com/grusirna/zhubobanlv-releases/releases/latest)
 
-当前主应用正式下载为 v0.1.11；统一版 0.1.15 正在构建与安装验收，通过后更新正式发行页。安装前核对发行页版本与随附校验和，0.1.15 使用 SHA256SUMS.txt。旧版下载保留于 Releases。
+当前主应用正式下载为 [0.1.15](https://github.com/grusirna/zhubobanlv-releases/releases/tag/v0.1.15)，已通过完整构建、同哈希六页面及独立 Windows 安装／升级／数据保留／卸载验收。安装前核对发行页版本与 SHA256SUMS.txt，旧版下载保留于 Releases。
 
 统一版提供麦克风优化、音效快捷键、窗口缩放、音视频录播、文稿提词和画面增强。[使用说明](docs/使用说明.md)包含安装、数据及设备边界。
 
