@@ -1,0 +1,48 @@
+name: Windows isolated installer acceptance
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Private main acceptance tool commit
+        required: true
+        type: string
+      version:
+        description: Reviewed candidate version
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  installer:
+    if: github.repository == 'grusirna/zhubobanlv-releases' && github.ref == 'refs/heads/main' && github.actor == github.repository_owner
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.21.1
+      - name: Verify isolated installation and upgrade
+        shell: pwsh
+        env:
+          SOURCE_READ_KEY: ${{ secrets.SOURCE_READ_KEY }}
+          INSTALLER_TRANSFER_INPUTS: ${{ secrets.INSTALLER_TRANSFER_INPUTS }}
+          SOURCE_REVISION: ${{ inputs.source_sha }}
+          PRODUCT_VERSION: ${{ inputs.version }}
+          BUILD_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/install-private.ps1
+      - name: Retain encrypted installer evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: installer-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            public-output/installer-evidence.enc
+            public-output/installer-evidence.enc.json
+            public-output/failure.json
+          if-no-files-found: error
+          retention-days: 3
